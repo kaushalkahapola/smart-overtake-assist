@@ -17,9 +17,10 @@ class VehicleDetector:
         Detects vehicles in the frame.
         Returns a list of detections: [x1, y1, x2, y2, class_id, confidence]
         """
-        # Lowered to 0.15 to catch distant vehicles early
-        # Trade-off: May get more false positives, but better safe than sorry for overtaking
-        results = self.model(frame, verbose=False, conf=0.15) 
+        # Enable tracking. persist=True keeps tracks across frames.
+        # Tracker configuration can be customized (e.g., tracker="bytetrack.yaml")
+        # imgsz=1280 improves detection of small/distant objects (inference will be slower)
+        results = self.model.track(frame, persist=True, verbose=False, conf=0.1, imgsz=1280) 
         detections = []
 
         for result in results:
@@ -29,6 +30,12 @@ class VehicleDetector:
                 if cls_id in self.vehicle_classes:
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
                     conf = float(box.conf[0])
-                    detections.append([int(x1), int(y1), int(x2), int(y2), cls_id, conf])
+                    
+                    # Extract Track ID if available
+                    track_id = -1
+                    if box.id is not None:
+                        track_id = int(box.id[0])
+                    
+                    detections.append([int(x1), int(y1), int(x2), int(y2), track_id, cls_id, conf])
         
         return detections

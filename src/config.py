@@ -1,3 +1,4 @@
+import os
 
 # ROI Settings (Region of Interest)
 # [x, y] coordinates for a polygon masking the lane area
@@ -9,4 +10,45 @@ TTC_THRESHOLD = 2.5           # seconds
 
 # Model Paths
 # Using 'yolov8s.pt' (Small) instead of Nano for better detection of distant bikes
-YOLO_MODEL_PATH = "../assets/models/yolov8s.pt"
+# Resolve path relative to this source file (src/config.py)
+# assets is in application/assets, src is in application/src
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+YOLO_MODEL_PATH = os.path.join(_current_dir, "..", "assets", "models", "yolov8s.pt")
+
+# Lane Detection Defaults
+LANE_DETECTION_DEFAULTS = {
+    "hough_canny_low": 50,
+    "hough_canny_high": 150,
+    "hough_rho": 2,
+    "hough_theta": 1,
+    "hough_threshold": 15,
+    "hough_min_line_len": 40,
+    "hough_max_line_gap": 20,
+    "roi_top_width": 100,
+    "roi_bottom_width": 600,
+    "roi_height_pct": 0.6,
+    "roi_bottom_offset": 50,
+    "smooth_factor": 5,
+    "white_l_min": 200,
+    "yellow_h_min": 15,
+    "yellow_h_max": 35,
+    "yellow_s_min": 100
+}
+
+# Distance Estimation Constants
+# F = (P * D) / W
+# Assume: Focal Length (pixels) approx 1000 for 720p (Needs calibration)
+# Car Width approx 1.8 meters
+DISTANCE_ESTIMATION_PARAMS = {
+    "FOCAL_LENGTH": 1000.0, 
+    "KNOWN_WIDTH": 1.8  # meters
+}
+
+# Expansion Thresholds (Width change per frame avg)
+# Used to distinguish Oncoming (Fast expansion) from Parked/Slower (Slow expansion)
+# These values need tuning based on video resolution and frame rate
+# Assuming 30FPS and 720p
+EXPANSION_THRESHOLDS = {
+    "ONCOMING": 2.0,  # Lowered to catch approach earlier
+    "STATIONARY": 0.5 
+}

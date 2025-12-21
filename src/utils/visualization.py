@@ -39,7 +39,12 @@ def draw_results(frame, detections, lane_info, status, divider_line):
     
     # Draw vehicle bounding boxes
     for det in detections:
-        x1, y1, x2, y2, conf, cls_id = det
+        # Handle different detection formats (with/without track_id)
+        if len(det) == 7:
+            x1, y1, x2, y2, track_id, cls_id, conf = det
+        else:
+            x1, y1, x2, y2, cls_id, conf = det
+            track_id = -1
         
         # Determine color based on position relative to divider
         color = (0, 255, 0)  # Green by default
@@ -57,11 +62,19 @@ def draw_results(frame, detections, lane_info, status, divider_line):
                     color = (0, 0, 255)  # Red - in oncoming lane
         
         cv2.rectangle(output, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-        cv2.putText(output, f'{conf:.2f}', (int(x1), int(y1)-10),
+        
+        label = f'ID:{track_id} {conf:.2f}' if track_id != -1 else f'{conf:.2f}'
+        cv2.putText(output, label, (int(x1), int(y1)-10),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     
     # Draw status
-    status_color = (0, 255, 0) if status == "SAFE" else (0, 0, 255)
+    if status == "SAFE":
+        status_color = (0, 255, 0) # Green
+    elif status == "WARNING":
+        status_color = (0, 165, 255) # Orange (BGR: 0, 165, 255)
+    else:
+        status_color = (0, 0, 255) # Red (RISKY)
+
     cv2.putText(output, f'Status: {status}', (10, 30),
                cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 3)
     

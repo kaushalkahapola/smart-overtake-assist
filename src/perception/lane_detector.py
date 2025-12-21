@@ -7,23 +7,26 @@ class LaneDetector:
     Features: HLS Color Filtering, Spatial Hough Filtering, Smoothing, UI Tuning.
     """
     def __init__(self):
+        import config 
+        defaults = config.LANE_DETECTION_DEFAULTS
+
         # --- Hough Params Default ---
-        self.hough_canny_low = 50
-        self.hough_canny_high = 150
-        self.hough_rho = 2            
-        self.hough_theta = 1          
-        self.hough_threshold = 15     
-        self.hough_min_line_len = 40  
-        self.hough_max_line_gap = 20  
+        self.hough_canny_low = defaults["hough_canny_low"]
+        self.hough_canny_high = defaults["hough_canny_high"]
+        self.hough_rho = defaults["hough_rho"]
+        self.hough_theta = defaults["hough_theta"]
+        self.hough_threshold = defaults["hough_threshold"]
+        self.hough_min_line_len = defaults["hough_min_line_len"]
+        self.hough_max_line_gap = defaults["hough_max_line_gap"]
 
         # --- ROI Defaults ---
-        self.roi_top_width = 100
-        self.roi_bottom_width = 600
-        self.roi_height_pct = 0.6
-        self.roi_bottom_offset = 50
+        self.roi_top_width = defaults["roi_top_width"]
+        self.roi_bottom_width = defaults["roi_bottom_width"]
+        self.roi_height_pct = defaults["roi_height_pct"]
+        self.roi_bottom_offset = defaults["roi_bottom_offset"]
 
         # --- Smoothing Params ---
-        self.smooth_factor = 5 
+        self.smooth_factor = defaults["smooth_factor"]
         self.left_history = []
         self.right_history = []
         
@@ -37,10 +40,10 @@ class LaneDetector:
         self.bottom_x_reject_thresh = 100.0 
 
         # --- Color Params ---
-        self.white_l_min = 200
-        self.yellow_h_min = 15
-        self.yellow_h_max = 35
-        self.yellow_s_min = 100
+        self.white_l_min = defaults["white_l_min"]
+        self.yellow_h_min = defaults["yellow_h_min"]
+        self.yellow_h_max = defaults["yellow_h_max"]
+        self.yellow_s_min = defaults["yellow_s_min"]
         
         self.init_ui()
 
