@@ -8,4 +8,5 @@ SAFE_DISTANCE_THRESHOLD = 50.0  # meters (approximate)
 TTC_THRESHOLD = 2.5           # seconds
 
 # Model Paths
-YOLO_MODEL_PATH = "../assets/models/yolov8n.pt"
+# Using 'yolov8s.pt' (Small) instead of Nano for better detection of distant bikes
+YOLO_MODEL_PATH = "../assets/models/yolov8s.pt"

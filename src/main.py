@@ -30,7 +30,7 @@ def main():
     # Resolve path relative to this script file to avoid CWD issues
     current_dir = os.path.dirname(os.path.abspath(__file__))
     # Go up one level to 'application' (from 'src'), then into 'assets/videos'
-    video_path = os.path.join(current_dir, "..", "assets", "videos", "test.mp4")
+    video_path = os.path.join(current_dir, "..", "assets", "videos", "test4.mp4")
     video_path = os.path.abspath(video_path)
 
     if os.path.exists(video_path):
@@ -56,21 +56,25 @@ def main():
             continue
 
         # Resize for consistent processing speed (optional)
-        # frame = cv2.resize(frame, (1280, 720))
+        frame = cv2.resize(frame, (1280, 720))
 
         # 1. Perception
+        # 1. Perception
         detections = vehicle_detector.detect(frame)
-        lanes, debug_edges = lane_detector.detect(frame)
-
+        left_line, right_line, debug_view = lane_detector.detect(frame)
+        
+        # Pack for safety check
+        lane_info = (left_line, right_line)
+        
         # 2. Risk Assessment
-        status = safety_checker.assess(detections, lanes)
+        status, divider = safety_checker.assess(detections, lane_info)
 
         # 3. Visualization
-        output_frame = draw_results(frame, detections, lanes, status)
+        output_frame = draw_results(frame, detections, lane_info, status, divider)
 
         # Display
         cv2.imshow("Smart Overtaking Assistant", output_frame)
-        cv2.imshow("Debug: Lane Edges", debug_edges)
+        cv2.imshow("Debug: Lane Detection", debug_view)
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

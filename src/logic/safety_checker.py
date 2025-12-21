@@ -1,68 +1,65 @@
+import cv2
 import numpy as np
 
 class SafetyChecker:
     def __init__(self):
         self.status = "UNKNOWN"
 
-    def assess(self, detections, lanes, frame_width=1280):
+    def assess(self, detections, lane_info):
         """
-        Assess safety based on detections and lane positions.
-        - detections: List of [x1, y1, x2, y2, cls, conf]
-        - lanes: [left_line, right_line] where line is [x1, y1, x2, y2]
+        Assess driving safety based on detected vehicles and lane boundaries (2 lanes).
+        
+        Args:
+            detections: List of vehicle detections
+            lane_info: (left_line, right_line) - linear segments [x1, y1, x2, y2]
+        
+        Returns:
+            status: "SAFE" or "RISKY"
+            divider_line: The right lane segment (boundary of driving lane)
         """
-        if lanes is None:
-            self.status = "NO LANES"
-            return self.status
-
-        # Assuming Left-Hand Traffic (Sri Lanka): Overtaking is on the RIGHT.
-        # We need to check if the Right Lane (oncoming) is clear.
+        left_line, right_line = lane_info
         
-        # Define the Right Lane Area
-        # Ideally, we would detect the far-right boundary, but LaneDetector gives current lane.
-        # So "Right Lane" effectively means the lane to the right of the current driving lane?
-        # Or does LaneDetector return the driving lane boundaries? Usually yes.
-        # So the "Overtaking Lane" is to the RIGHT of the right_line of the current lane.
+        # Use right lane as the boundary
+        divider_line = right_line
         
-        # Simplification: Let's assume we are looking for vehicles in the right half of the image
-        # that are NOT in the current lane, or we check if the current lane IS the overtaking lane (lane change).
+        if divider_line is None:
+            # No lane detected - can't assess safety
+            return "SAFE", None
         
-        # Better approach for Single-Camera Two-Lane Road:
-        # The driving lane is bounded by [left_line, right_line].
-        # The Overtaking Lane is to the Right of [right_line].
-        
-        left_line, right_line = lanes
-        
-        # Check for vehicles in the Overtaking Zone (Right of the Right Line)
-        # x_coordinate > right_line_x
-        
-        risky_vehicle_count = 0
-        
+        # Check each detected vehicle
         for det in detections:
-            x1, y1, x2, y2, cls, conf = det
-            car_center_x = (x1 + x2) / 2
-            car_bottom_y = y2
+            x1, y1, x2, y2, conf, cls_id = det
             
-            # Find x-coordinate of the right lane line at this y-level
-            # Line equation x = (y - c) / m
-            # We need slope (m) and intercept (c) of the right line
-            rx1, ry1, rx2, ry2 = right_line
+            # Vehicle bottom-center point (closest to camera)
+            vehicle_x = (x1 + x2) / 2
+            vehicle_y = y2  # Bottom of bounding box
             
-            if rx2 - rx1 == 0: # Vertical line
-                lane_x_at_car = rx1
+            # Calculate divider position at vehicle's y-coordinate
+            # Line: x = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            lx1, ly1, lx2, ly2 = divider_line
+            
+            if ly2 - ly1 == 0: # Avoid division by zero (horizontal line)
+                divider_x = lx1 
             else:
-                m = (ry2 - ry1) / (rx2 - rx1)
-                c = ry1 - m * rx1
-                if m == 0: m = 0.001
-                lane_x_at_car = (car_bottom_y - c) / m
+                divider_x = lx1 + (vehicle_y - ly1) * (lx2 - lx1) / (ly2 - ly1)
             
-            # If car is to the RIGHT of the current lane boundary, it's in the overtaking lane (or off-road)
-            # And if it's close enough (y is large), it's a risk.
-            if car_center_x > lane_x_at_car:
-                risky_vehicle_count += 1
+                divider_x = lx1 + (vehicle_y - ly1) * (lx2 - lx1) / (ly2 - ly1)
+            
+            # Check overlap with Overtaking Lane (Right Side)
+            # Vehicle width
+            v_width = x2 - x1
+            if v_width <= 0: continue
+            
+            # Amount of vehicle to the RIGHT of the divider
+            # If x2 (right edge) is left of divider, overlap is 0 (negative)
+            # If x1 (left edge) is right of divider, overlap is width (ratio > 1)
+            overlap_width = x2 - divider_x
+            
+            overlap_ratio = overlap_width / v_width
+            
+            # Rule: If > 30% of vehicle is in the Overtaking Lane -> RISKY
+            if overlap_ratio > 0.3:
+                return "RISKY", divider_line
         
-        if risky_vehicle_count > 0:
-            self.status = "RISKY - ONCOMING TRAFFIC"
-        else:
-            self.status = "SAFE TO OVERTAKE"
-            
-        return self.status
+        # All vehicles are in our lane or behind us - SAFE
+        return "SAFE", divider_line

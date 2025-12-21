@@ -1,60 +1,68 @@
 import cv2
 import numpy as np
 
-def draw_results(frame, detections, lanes, status):
-    output_frame = frame.copy()
+def draw_results(frame, detections, lane_info, status, divider_line):
+    """Draw lane overlay and vehicle bounding boxes - simplified for 2 lanes"""
+    output = frame.copy()
     
-    # Draw Lanes
-    if lanes is not None:
-        left_line, right_line = lanes
-        try:
-            # Draw lines
-            cv2.line(output_frame, (int(left_line[0]), int(left_line[1])), (int(left_line[2]), int(left_line[3])), (255, 0, 0), 5)
-            cv2.line(output_frame, (int(right_line[0]), int(right_line[1])), (int(right_line[2]), int(right_line[3])), (255, 0, 0), 5)
-            
-            # Fill lane area transparency
-            overlay = output_frame.copy()
-            pts = np.array([[
-                (left_line[0], left_line[1]), 
-                (left_line[2], left_line[3]), 
-                (right_line[2], right_line[3]), 
-                (right_line[0], right_line[1])
-            ]], dtype=np.int32)
-            cv2.fillPoly(overlay, pts, (0, 255, 255))
-            cv2.addWeighted(overlay, 0.3, output_frame, 0.7, 0, output_frame)
-        except Exception as e:
-            # Prevent crash on singluar lane detection
-            pass
+    left_line, right_line = lane_info
+    
+    # Draw lane overlay
+    lane_overlay = np.zeros_like(frame)
+    if left_line is not None and right_line is not None:
+        # Create points for polygon
+        # left_line is [x1, y1, x2, y2] (bottom to top approx)
+        # right_line is [x1, y1, x2, y2]
+        
+        # We need 4 points: Left Bottom, Left Top, Right Top, Right Bottom
+        # Assuming lines are [x1, y1, x2, y2] where y1 > y2 (bottom to top) usually, 
+        # but let's be safe.
+        l_p1 = (left_line[0], left_line[1])
+        l_p2 = (left_line[2], left_line[3])
+        r_p1 = (right_line[0], right_line[1])
+        r_p2 = (right_line[2], right_line[3])
+        
+        # Sort points by Y to identify top/bottom
+        # This is a simple heuristic: Assuming typical road view
+        # We want the polygon to connect the lines
+        
+        pts = np.array([l_p1, l_p2, r_p2, r_p1], dtype=np.int32)
+        # Draw semi-transparent green filled polygon
+        cv2.fillPoly(lane_overlay, [pts], (0, 255, 0))
+        
+        # Draw lines (Green matching lane5)
+        cv2.line(output, l_p1, l_p2, (0, 255, 0), 5)
+        cv2.line(output, r_p1, r_p2, (0, 255, 0), 5)
 
-    # Draw Vehicles
+    # Blend with original
+    output = cv2.addWeighted(output, 1, lane_overlay, 0.3, 0)
+    
+    # Draw vehicle bounding boxes
     for det in detections:
-        x1, y1, x2, y2, cls, conf = det
+        x1, y1, x2, y2, conf, cls_id = det
         
-        # Approximate Distance Calculation (Geometric heuristic)
-        # Assumes flat road and fixed camera height.
-        height, width = frame.shape[:2]
+        # Determine color based on position relative to divider
+        color = (0, 255, 0)  # Green by default
         
-        # Heuristic: Horizon is roughly at 50% height
-        horizon_y = int(height * 0.5)
-        
-        # Avoid division by zero or negative
-        if y2 > horizon_y + 10: # +10 pixel buffer
-            dist = (height * 10) / (y2 - horizon_y) 
-            label = f"{dist:.1f}m"
-        else:
-            label = ">200m" # Distant
+        if divider_line is not None:
+            vehicle_x = (x1 + x2) / 2
+            vehicle_y = y2
             
-        color = (0, 255, 0) 
-        cv2.rectangle(output_frame, (x1, y1), (x2, y2), color, 2)
+            # Linear interpolation for divider x at vehicle_y
+            lx1, ly1, lx2, ly2 = divider_line
+            if ly2 - ly1 != 0:
+                 divider_x = lx1 + (vehicle_y - ly1) * (lx2 - lx1) / (ly2 - ly1)
+                 
+                 if vehicle_x > divider_x:
+                    color = (0, 0, 255)  # Red - in oncoming lane
         
-        # Show Class, Confidence and Dist
-        cv2.putText(output_frame, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-    # Draw Status
-    color_status = (0, 255, 0) if "SAFE" in status else (0, 0, 255)
+        cv2.rectangle(output, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+        cv2.putText(output, f'{conf:.2f}', (int(x1), int(y1)-10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     
-    # Status Banner
-    cv2.rectangle(output_frame, (0, 0), (frame.shape[1], 50), (0, 0, 0), -1)
-    cv2.putText(output_frame, f"STATUS: {status}", (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 1, color_status, 2)
-
-    return output_frame
+    # Draw status
+    status_color = (0, 255, 0) if status == "SAFE" else (0, 0, 255)
+    cv2.putText(output, f'Status: {status}', (10, 30),
+               cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 3)
+    
+    return output

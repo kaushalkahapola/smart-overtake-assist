@@ -17,7 +17,9 @@ class VehicleDetector:
         Detects vehicles in the frame.
         Returns a list of detections: [x1, y1, x2, y2, class_id, confidence]
         """
-        results = self.model(frame, verbose=False)
+        # Lowered to 0.15 to catch distant vehicles early
+        # Trade-off: May get more false positives, but better safe than sorry for overtaking
+        results = self.model(frame, verbose=False, conf=0.15) 
         detections = []
 
         for result in results:
