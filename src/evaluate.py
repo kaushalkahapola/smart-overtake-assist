@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from perception.vehicle_detector import VehicleDetector
 from perception.lane_detector import LaneDetector
 from logic.safety_checker import SafetyChecker
+from utils.visualization import draw_results
 import config
 
 def calculate_metrics(y_true, y_pred, labels=["SAFE", "RISKY"]):
@@ -100,6 +101,15 @@ def evaluate(video_path, csv_path):
     lane_detector = LaneDetector()
     safety_checker = SafetyChecker()
     
+    # Create Results Folders
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    results_dir = os.path.join(base_dir, "results")
+    success_dir = os.path.join(results_dir, "success")
+    fail_dir = os.path.join(results_dir, "fail")
+    
+    for d in [success_dir, fail_dir]:
+        os.makedirs(d, exist_ok=True)
+    
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error opening video: {video_path}")
@@ -186,6 +196,18 @@ def evaluate(video_path, csv_path):
         y_pred.append(final_pred)
         
         print(f"Frame {target}: True={final_truth}, Pred={final_pred} (Raw: {status})")
+
+        # 3. Save Result Image
+        # Use draw_results to get the frame with overlays
+        output_frame = draw_results(frame, detections, lane_info, status, right_line)
+        
+        filename = f"frame_{target}_truth_{final_truth}_pred_{final_pred}.jpg".lower()
+        if final_truth == final_pred:
+            save_path = os.path.join(success_dir, filename)
+        else:
+            save_path = os.path.join(fail_dir, filename)
+            
+        cv2.imwrite(save_path, output_frame)
 
     cap.release()
     cv2.destroyAllWindows()
