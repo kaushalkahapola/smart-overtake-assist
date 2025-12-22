@@ -1,11 +1,12 @@
-
 import csv
 import os
 import cv2
 import numpy as np
 import sys
 
-# Import modules
+# Adjust path to import modules if running from src directory
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from perception.vehicle_detector import VehicleDetector
 from perception.lane_detector import LaneDetector
 from logic.safety_checker import SafetyChecker
@@ -36,25 +37,62 @@ def calculate_metrics(y_true, y_pred, labels=["SAFE", "RISKY"]):
 def evaluate(video_path, csv_path):
     print(f"Loading Ground Truth from: {csv_path}")
     
-    # Read CSV: frame_id, label
     ground_truth = {}
     try:
         with open(csv_path, 'r') as f:
+            # 1. Read the Header Line first
             reader = csv.reader(f)
-            next(reader, None) # Skip header
+            headers = next(reader, None)
+            
+            if not headers:
+                print("Error: CSV file is empty.")
+                return
+
+            # 2. Find which column index is 'Frame' and which is 'Label'
+            frame_idx = -1
+            label_idx = -1
+            
+            print(f"Found headers: {headers}")
+            
+            for i, h in enumerate(headers):
+                h_clean = h.lower().strip()
+                # Look for 'frame' (matches "Frame ID", "frame_id", "Frame ID (Calculated)")
+                if 'frame' in h_clean: 
+                    frame_idx = i
+                # Look for 'label'
+                if 'label' in h_clean:
+                    label_idx = i
+
+            if frame_idx == -1 or label_idx == -1:
+                print("Error: Could not identify columns. Make sure headers contain 'Frame' and 'Label'.")
+                return
+
+            print(f"Reading Frames from Col {frame_idx} and Labels from Col {label_idx}...")
+
+            # 3. Read the Data
+            count = 0
             for row in reader:
-                if len(row) >= 2:
-                    frame_id = int(row[0])
-                    label = row[1].strip().upper()
-                    ground_truth[frame_id] = label
+                # Ensure row has enough columns
+                if len(row) > max(frame_idx, label_idx):
+                    try:
+                        # Get Frame ID (Handle Excel floats like "120.0")
+                        f_val = row[frame_idx].strip()
+                        if not f_val: continue
+                        frame_id = int(float(f_val)) 
+                        
+                        # Get Label
+                        label = row[label_idx].strip().upper()
+                        
+                        if label in ["SAFE", "RISKY"]:
+                            ground_truth[frame_id] = label
+                            count += 1
+                    except ValueError:
+                        continue # Skip bad rows
+            
+            print(f"Successfully loaded {count} labeled frames.")
+
     except FileNotFoundError:
-        print("CSV file not found. Generating a sample template...")
-        with open("evaluation_template.csv", "w", newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(["frame_id", "label"])
-            writer.writerow(["100", "SAFE"])
-            writer.writerow(["200", "RISKY"])
-        print("Created 'evaluation_template.csv'. Please rename and fill it with real data.")
+        print("CSV file not found.")
         return
 
     print("Initializing Modules...")
@@ -73,10 +111,48 @@ def evaluate(video_path, csv_path):
     # Sort frame indices to reading sequentially
     target_frames = sorted(ground_truth.keys())
     
-    current_frame = 0
+    if not target_frames:
+        print("No valid frames to evaluate. Check CSV.")
+        return
     
     print(f"Evaluating on {len(target_frames)} labeled frames...")
     
+    # --- Tuning Loop ---
+    print("\n" + "="*40)
+    print("ENTRYING TUNING MODE")
+    print("Adjust parameters in 'Debug: Lane Detection' window.")
+    print("Press 's' to START evaluation, or 'q' to abort.")
+    print("="*40 + "\n")
+
+    first_frame_id = target_frames[0]
+    cap.set(cv2.CAP_PROP_POS_FRAMES, first_frame_id)
+    ret, first_frame = cap.read()
+    
+    if ret:
+        while True:
+            # Re-read or just process the same frame
+            # 1. Perception (for tuning)
+            detections = vehicle_detector.detect(first_frame)
+            left_line, right_line, debug_view = lane_detector.detect(first_frame)
+            lane_info = (left_line, right_line)
+            
+            # 2. Logic
+            status, divider = safety_checker.assess(detections, lane_info)
+            
+            # Display
+            cv2.imshow("Tuning: First Frame", debug_view)
+            
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('s'):
+                print("Tuning complete. Starting evaluation...")
+                cv2.destroyWindow("Tuning: First Frame")
+                break
+            elif key == ord('q'):
+                print("Evaluation aborted by user.")
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+
     for target in target_frames:
         # Fast forward
         cap.set(cv2.CAP_PROP_POS_FRAMES, target)
@@ -93,15 +169,16 @@ def evaluate(video_path, csv_path):
         # 2. Logic
         status, _ = safety_checker.assess(detections, lane_info)
         
-        # Map WAIT -> SAFE for binary classification usually, or handle separately?
-        # User asked for SAFE vs RISKY.
-        # "WAIT" means "Safe to follow but don't overtake". 
-        # For simplicity, map WAIT -> SAFE (since it's not DANGEROUS/RISKY).
+        # Map Internal Status to Binary Label
+        # RISKY -> RISKY
+        # WARNING/SAFE -> SAFE (Warning implies "Don't overtake", but usually considered Safe from *Collision*)
         final_pred = "SAFE"
-        if status == "RISKY":
+        
+        # Check against string values returned by safety_checker
+        if status == "RISKY" or status == "WARNING":
             final_pred = "RISKY"
-        elif status == "WAIT":
-            final_pred = "SAFE" 
+        else:
+            final_pred = "SAFE"
             
         final_truth = ground_truth[target]
         
@@ -111,13 +188,32 @@ def evaluate(video_path, csv_path):
         print(f"Frame {target}: True={final_truth}, Pred={final_pred} (Raw: {status})")
 
     cap.release()
+    cv2.destroyAllWindows()
     
     # Metrics
     calculate_metrics(y_true, y_pred)
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python evaluate.py <video_path> <csv_path>")
-        print("Example: python evaluate.py ../assets/videos/test4.mp4 labels.csv")
-    else:
-        evaluate(sys.argv[1], sys.argv[2])
+    # Video Source Logic (same as main.py)
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    default_video = os.path.join(current_dir, "..", "assets", "videos", "test4.mp4")
+    default_video = os.path.abspath(default_video)
+    
+    default_csv = os.path.join(current_dir, "..", "ground_truth.csv")
+    default_csv = os.path.abspath(default_csv)
+
+    video_path = sys.argv[1] if len(sys.argv) > 1 else default_video
+    csv_path = sys.argv[2] if len(sys.argv) > 2 else "ground_truth.csv"
+
+    # Final path validation
+    video_path = os.path.abspath(video_path)
+    if not os.path.exists(video_path):
+        print(f"Error: Video file not found at {video_path}")
+        # Try local fallback if absolute failed
+        local_video = os.path.join(os.getcwd(), sys.argv[1] if len(sys.argv) > 1 else "")
+        if os.path.exists(local_video):
+            video_path = local_video
+        else:
+            sys.exit(1)
+
+    evaluate(video_path, csv_path)

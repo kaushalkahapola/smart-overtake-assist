@@ -1,9 +1,9 @@
 import cv2
 import sys
 import numpy as np
+import time  # Added time module
 
 # Adjust path to import modules if running from src directory
-import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,9 +27,7 @@ def main():
         return
 
     # Video Source
-    # Resolve path relative to this script file to avoid CWD issues
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Go up one level to 'application' (from 'src'), then into 'assets/videos'
     video_path = os.path.join(current_dir, "..", "assets", "videos", "test4.mp4")
     video_path = os.path.abspath(video_path)
 
@@ -45,25 +43,27 @@ def main():
         print("Error: Could not open video source.")
         return
 
-    print("Press 'q' to exit.")
+    print("System running... Press 'q' to stop and calculate Average FPS.")
+
+    # --- FPS Variables ---
+    frame_count = 0
+    start_time = time.time()
+    # ---------------------
 
     while True:
         ret, frame = cap.read()
         if not ret:
             print("End of video stream.")
-            # Loop video
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            continue
+            break # Stop loop at end of video for accurate calculation
 
-        # Resize for consistent processing speed (optional)
+        # Resize
         frame = cv2.resize(frame, (1280, 720))
+        frame_count += 1
 
-        # 1. Perception
         # 1. Perception
         detections = vehicle_detector.detect(frame)
         left_line, right_line, debug_view = lane_detector.detect(frame)
         
-        # Pack for safety check
         lane_info = (left_line, right_line)
         
         # 2. Risk Assessment
@@ -78,6 +78,19 @@ def main():
 
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+
+    # --- Final FPS Calculation ---
+    end_time = time.time()
+    total_time = end_time - start_time
+    
+    if total_time > 0:
+        avg_fps = frame_count / total_time
+        print("\n" + "="*40)
+        print(f"  Total Frames Processed: {frame_count}")
+        print(f"  Total Time Elapsed:     {total_time:.2f} seconds")
+        print(f"  AVERAGE FPS:            {avg_fps:.2f}")
+        print("="*40 + "\n")
+    # -----------------------------
 
     cap.release()
     cv2.destroyAllWindows()
