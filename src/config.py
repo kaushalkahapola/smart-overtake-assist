@@ -13,7 +13,8 @@ TTC_THRESHOLD = 2.5           # seconds
 # Resolve path relative to this source file (src/config.py)
 # assets is in application/assets, src is in application/src
 _current_dir = os.path.dirname(os.path.abspath(__file__))
-YOLO_MODEL_PATH = os.path.join(_current_dir, "..", "assets", "models", "yolov8s.pt")
+YOLO_MODEL_PATH = os.path.join(_current_dir, "..", "assets", "models", "yolov8n.pt")
+TEST_VIDEO_PATH = os.path.join(_current_dir, "..", "assets", "videos", "test4.mp4")
 
 # Lane Detection Defaults
 LANE_DETECTION_DEFAULTS = {

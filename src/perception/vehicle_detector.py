@@ -1,41 +1,47 @@
 from ultralytics import YOLO
-import cv2
-import numpy as np
+import torch
 
 class VehicleDetector:
-    def __init__(self, model_path="yolov8n.pt"):
-        # Load the YOLOv8 model
-        # Using 'yolov8n.pt' will automatically download it if not present
+    def __init__(self, model_path):
+        # Load the model
         self.model = YOLO(model_path)
         
-        # COCO class IDs for vehicles: 
-        # 2: car, 3: motorcycle, 5: bus, 7: truck
-        self.vehicle_classes = [2, 3, 5, 7]
+        # Frame Skipping State
+        self.frame_count = 0
+        self.skip_interval = 3  # Run detection every 3rd frame
+        self.last_detections = [] # Cache
 
     def detect(self, frame):
         """
-        Detects vehicles in the frame.
-        Returns a list of detections: [x1, y1, x2, y2, class_id, confidence]
+        Detects vehicles. 
+        Optimization: Runs inference only every 'skip_interval' frames.
+        Returns cached detections for skipped frames.
         """
-        # Enable tracking. persist=True keeps tracks across frames.
-        # Tracker configuration can be customized (e.g., tracker="bytetrack.yaml")
-        # imgsz=1280 improves detection of small/distant objects (inference will be slower)
-        results = self.model.track(frame, persist=True, verbose=False, conf=0.1, imgsz=1280) 
-        detections = []
-
-        for result in results:
-            boxes = result.boxes
-            for box in boxes:
-                cls_id = int(box.cls[0])
-                if cls_id in self.vehicle_classes:
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    conf = float(box.conf[0])
-                    
-                    # Extract Track ID if available
-                    track_id = -1
-                    if box.id is not None:
-                        track_id = int(box.id[0])
-                    
-                    detections.append([int(x1), int(y1), int(x2), int(y2), track_id, cls_id, conf])
+        self.frame_count += 1
         
+        # 1. Check if we should skip this frame
+        if (self.frame_count % self.skip_interval != 0) and (self.last_detections is not None):
+            return self.last_detections
+
+        # 2. Run Heavy Inference (Only if not skipped)
+        # ensure imgsz=640 for speed
+        results = self.model.track(frame, persist=True, verbose=False, conf=0.1, imgsz=640) 
+        
+        detections = []
+        
+        if results and results[0].boxes:
+            for box in results[0].boxes:
+                # Extract coordinates
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                
+                # Get Track ID (if available)
+                track_id = int(box.id.item()) if box.id is not None else -1
+                
+                # Filter for vehicles (car, bus, truck, motorcycle)
+                cls_id = int(box.cls.item())
+                if cls_id in [2, 3, 5, 7]: 
+                    detections.append([int(x1), int(y1), int(x2), int(y2), track_id])
+        
+        # 3. Update Cache
+        self.last_detections = detections
         return detections
