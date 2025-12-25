@@ -40,7 +40,8 @@ class VehicleDetector:
                 # Filter for vehicles (car, bus, truck, motorcycle)
                 cls_id = int(box.cls.item())
                 if cls_id in [2, 3, 5, 7]: 
-                    detections.append([int(x1), int(y1), int(x2), int(y2), track_id])
+                    conf = float(box.conf.item())
+                    detections.append([int(x1), int(y1), int(x2), int(y2), track_id, cls_id, conf])
         
         # 3. Update Cache
         self.last_detections = detections

@@ -340,7 +340,7 @@ class LaneDetector:
         right_line = self.make_coordinates(frame, right_smooth)
         
         # 12. Visualization (Debug Mosaic)
-        # Create Result Image with Green Overlay (Lane5 style)
+        # Create Result Image with Green Overlay
         result_img = self.draw_lane_overlay(frame, left_line, right_line)
         
         debug_view = self.create_debug_mosaic(result_img, combined_edges, masked_edges, roi_pts)
