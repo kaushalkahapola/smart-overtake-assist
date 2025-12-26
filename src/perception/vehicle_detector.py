@@ -8,7 +8,7 @@ class VehicleDetector:
         
         # Frame Skipping State
         self.frame_count = 0
-        self.skip_interval = 3  # Run detection every 2nd frame (was 3 for better motorcycle tracking)
+        self.skip_interval = 3  
         self.last_detections = [] # Cache
         
         # Class-specific confidence thresholds
