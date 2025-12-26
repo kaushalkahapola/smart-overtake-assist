@@ -80,7 +80,7 @@ def find_frame(video_path):
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    default_video = os.path.join(current_dir, "..", "..", "assets", "videos", "test4.mp4")
+    default_video = os.path.join(current_dir, "..", "..", "assets", "videos", "test5.mp4")
     video_path = sys.argv[1] if len(sys.argv) > 1 else default_video
     video_path = os.path.abspath(video_path)
     

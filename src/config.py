@@ -33,7 +33,16 @@ LANE_DETECTION_DEFAULTS = {
     "white_l_min": 200,
     "yellow_h_min": 15,
     "yellow_h_max": 35,
-    "yellow_s_min": 100
+    "yellow_s_min": 100,
+    
+    # Forecasting and Stability Parameters
+    "forecast_enabled": True,
+    "bottom_anchor_threshold": 50,  # max px deviation for bottom point
+    "min_lane_separation": 200,     # min px between left and right lanes at bottom
+    "max_lane_width": 450,          # max px lane width at bottom (rejects far-right line)
+    "lane_width_tolerance": 0.3,    # 30% width change tolerance
+    "forecast_weight": 0.7,         # weight for predicted position vs new detection
+    "left_lane_max_x_ratio": 0.45   # left lane bottom_x should be < 45% of frame width
 }
 
 # Distance Estimation Constants

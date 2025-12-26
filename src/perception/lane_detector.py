@@ -35,9 +35,22 @@ class LaneDetector:
         self.right_rejections = 0
         self.max_rejections = 3
         
-        # Rejection Thresholds
+        # Rejection Thresholds (Legacy - will be replaced by forecasting)
         self.slope_reject_thresh = 0.3 
         self.bottom_x_reject_thresh = 100.0 
+        
+        # --- Forecasting Parameters ---
+        self.forecast_enabled = defaults["forecast_enabled"]
+        self.bottom_anchor_threshold = defaults["bottom_anchor_threshold"]
+        self.min_lane_separation = defaults["min_lane_separation"]
+        self.max_lane_width = defaults["max_lane_width"]
+        self.lane_width_tolerance = defaults["lane_width_tolerance"]
+        self.forecast_weight = defaults["forecast_weight"]
+        self.left_lane_max_x_ratio = defaults["left_lane_max_x_ratio"]
+        
+        # Lane Width Tracking
+        self.lane_width_history = []
+        self.expected_lane_width = None
 
         # --- Color Params ---
         self.white_l_min = defaults["white_l_min"]
@@ -152,12 +165,12 @@ class LaneDetector:
                 
                 # Filter based on slope AND spatial location
                 if -0.9 < slope < -0.3: 
-                    # Left lane: Should land on let side
+                    # Left line: Should be on left side (symmetric with right line)
                     if x1 < center_x and x2 < center_x:
                         left_lines.append((slope, bottom_x))
                         left_weights.append(length)
                 elif 0.3 < slope < 0.9:
-                    # Right lane: Should land on right side
+                    # Right line: Should be on right side
                     if x1 > center_x and x2 > center_x:
                         right_lines.append((slope, bottom_x))
                         right_weights.append(length)
@@ -166,51 +179,215 @@ class LaneDetector:
         right_lane = None
         
         if len(left_lines) > 0:
-            left_lane = np.dot(left_weights, left_lines) / np.sum(left_weights)
+            # Apply center-proximity bonus: prefer lines closer to center
+            # This prevents confusion with far-left lines (curbs, road edges)
+            boosted_left_weights = []
+            for i, (slope, bottom_x) in enumerate(left_lines):
+                # Distance from center (normalized)
+                distance_from_center = abs(bottom_x - center_x) / w
+                # Proximity bonus: closer to center = higher weight
+                # Use exponential decay: lines far from center get penalized
+                proximity_bonus = np.exp(-distance_from_center * 2)  # Decay factor = 2
+                boosted_weight = left_weights[i] * (1 + proximity_bonus)
+                boosted_left_weights.append(boosted_weight)
+            
+            left_lane = np.dot(boosted_left_weights, left_lines) / np.sum(boosted_left_weights)
             
         if len(right_lines) > 0:
-            right_lane = np.dot(right_weights, right_lines) / np.sum(right_weights)
+            # INTELLIGENT ALGORITHM: Pick right line based on expected lane width
+            if left_lane is not None:
+                left_bottom_x = left_lane[1]
+                
+                # Calculate lane widths for all candidates
+                candidate_widths = []
+                for slope, bottom_x in right_lines:
+                    width = abs(bottom_x - left_bottom_x)
+                    candidate_widths.append(width)
+                
+                # ADAPTIVE SELECTION based on history
+                if self.expected_lane_width is not None:
+                    # We have historical data - pick candidate closest to expected width
+                    best_idx = -1
+                    min_deviation = float('inf')
+                    
+                    for i, width in enumerate(candidate_widths):
+                        deviation = abs(width - self.expected_lane_width)
+                        
+                        # Prefer candidates close to expected width
+                        if deviation < min_deviation:
+                            min_deviation = deviation
+                            best_idx = i
+                    
+                    # Use the best candidate
+                    if best_idx >= 0:
+                        right_lane = right_lines[best_idx]
+                        
+                        # Update expected width (slow adaptation)
+                        self.expected_lane_width = 0.9 * self.expected_lane_width + 0.1 * candidate_widths[best_idx]
+                else:
+                    # NO HISTORY: Pick the NARROWEST lane (most likely correct)
+                    # Assumption: single lane is narrower than combined lanes
+                    min_width = min(candidate_widths)
+                    best_idx = candidate_widths.index(min_width)
+                    right_lane = right_lines[best_idx]
+                    
+                    # Initialize expected width
+                    self.expected_lane_width = min_width
+            else:
+                # No left line - use center proximity
+                boosted_right_weights = []
+                for i, (slope, bottom_x) in enumerate(right_lines):
+                    distance_from_center = abs(bottom_x - center_x) / w
+                    proximity_bonus = np.exp(-distance_from_center * 2)
+                    boosted_weight = right_weights[i] * (1 + proximity_bonus)
+                    boosted_right_weights.append(boosted_weight)
+                
+                right_lane = np.dot(boosted_right_weights, right_lines) / np.sum(boosted_right_weights)
             
         return left_lane, right_lane
 
-    def smooth_lines(self, current_line, history, side='left'):
-        # Determine which rejection counter to use
+    def forecast_lane_position(self, history):
+        """
+        Predicts next lane position based on historical trend.
+        Returns predicted (slope, bottom_x) or None if insufficient data.
+        """
+        if len(history) < 3:
+            return None
+        
+        # Extract recent bottom_x positions
+        recent_bottom_x = [h[1] for h in history[-3:]]
+        recent_slopes = [h[0] for h in history[-3:]]
+        
+        # Calculate velocity (average change per frame)
+        bottom_x_velocity = (recent_bottom_x[-1] - recent_bottom_x[0]) / 2.0
+        slope_velocity = (recent_slopes[-1] - recent_slopes[0]) / 2.0
+        
+        # Predict next position
+        predicted_bottom_x = recent_bottom_x[-1] + bottom_x_velocity
+        predicted_slope = recent_slopes[-1] + slope_velocity
+        
+        return (predicted_slope, predicted_bottom_x)
+    
+    def validate_lane_width(self, left_lane, right_lane):
+        """
+        Validates that lane width is consistent with history.
+        Returns True if valid, False if suspicious.
+        """
+        if left_lane is None or right_lane is None:
+            return True  # Can't validate without both lanes
+        
+        current_width = abs(right_lane[1] - left_lane[1])  # bottom_x difference
+        
+        # Check minimum separation
+        if current_width < self.min_lane_separation:
+            return False
+        
+        # Track expected width
+        if self.expected_lane_width is None:
+            self.expected_lane_width = current_width
+            return True
+        
+        # Check if width changed too much
+        width_ratio = current_width / self.expected_lane_width
+        if width_ratio < (1 - self.lane_width_tolerance) or width_ratio > (1 + self.lane_width_tolerance):
+            return False
+        
+        # Update expected width (slow adaptation)
+        self.expected_lane_width = 0.9 * self.expected_lane_width + 0.1 * current_width
+        
+        return True
+    
+    def smooth_lines_with_forecasting(self, current_line, history, side='left'):
+        """
+        Improved smoothing using bottom-point anchor stability and temporal forecasting.
+        
+        Key Principle: The bottom portion of the lane should remain stable frame-to-frame.
+        Only the top portion changes as the vehicle moves forward.
+        """
         rejections = self.left_rejections if side == 'left' else self.right_rejections
         
+        # No current detection
         if current_line is None:
             if len(history) > 0:
-                 return np.mean(history, axis=0)
+                # Use last known good position
+                return np.mean(history, axis=0)
             return None
-
+        
+        # First detection - accept it
         if len(history) == 0:
             history.append(current_line)
-            if side == 'left': self.left_rejections = 0
-            else: self.right_rejections = 0
+            if side == 'left': 
+                self.left_rejections = 0
+            else: 
+                self.right_rejections = 0
             return current_line
         
+        # --- Forecasting Logic ---
+        if self.forecast_enabled and len(history) >= 3:
+            predicted = self.forecast_lane_position(history)
+            
+            if predicted is not None:
+                pred_slope, pred_bottom_x = predicted
+                curr_slope, curr_bottom_x = current_line
+                
+                # Check deviation from prediction
+                bottom_x_deviation = abs(curr_bottom_x - pred_bottom_x)
+                
+                if bottom_x_deviation > self.bottom_anchor_threshold:
+                    # Suspicious jump detected
+                    rejections += 1
+                    if side == 'left': 
+                        self.left_rejections = rejections
+                    else: 
+                        self.right_rejections = rejections
+                    
+                    if rejections > self.max_rejections:
+                        # Too many rejections - reset and accept new detection
+                        history.clear()
+                        history.append(current_line)
+                        if side == 'left': 
+                            self.left_rejections = 0
+                        else: 
+                            self.right_rejections = 0
+                        return current_line
+                    else:
+                        # Use weighted blend of prediction and current
+                        blended_slope = self.forecast_weight * pred_slope + (1 - self.forecast_weight) * curr_slope
+                        blended_bottom_x = self.forecast_weight * pred_bottom_x + (1 - self.forecast_weight) * curr_bottom_x
+                        return np.array([blended_slope, blended_bottom_x])
+        
+        # --- Legacy Smoothing (Fallback) ---
         avg = np.mean(history, axis=0)
         slope_diff = abs(current_line[0] - avg[0])
         bottom_x_diff = abs(current_line[1] - avg[1])
         
         if slope_diff < self.slope_reject_thresh and bottom_x_diff < self.bottom_x_reject_thresh:
-            # Valid detection
+            # Valid detection - add to history
             history.append(current_line)
             if len(history) > self.smooth_factor:
                 history.pop(0)
-            if side == 'left': self.left_rejections = 0
-            else: self.right_rejections = 0
+            if side == 'left': 
+                self.left_rejections = 0
+            else: 
+                self.right_rejections = 0
         else:
-            # Outlier detected
+            # Outlier - increment rejections
             rejections += 1
-            if side == 'left': self.left_rejections = rejections
-            else: self.right_rejections = rejections
+            if side == 'left': 
+                self.left_rejections = rejections
+            else: 
+                self.right_rejections = rejections
             
             if rejections > self.max_rejections:
-                 history.clear()
-                 history.append(current_line)
-                 if side == 'left': self.left_rejections = 0
-                 else: self.right_rejections = 0
-
+                # Force reset
+                history.clear()
+                history.append(current_line)
+                if side == 'left': 
+                    self.left_rejections = 0
+                else: 
+                    self.right_rejections = 0
+        
+        # Return smoothed average
         if len(history) > 0:
             return np.mean(history, axis=0)
         return None
@@ -329,11 +506,18 @@ class LaneDetector:
                                 minLineLength=self.hough_min_line_len, 
                                 maxLineGap=self.hough_max_line_gap)
                                 
-        # 10. Average & Smooth
+        # 10. Average & Smooth with Forecasting
         left_raw, right_raw = self.average_slope_bottom_x(lines, frame.shape)
         
-        left_smooth = self.smooth_lines(left_raw, self.left_history, side='left')
-        right_smooth = self.smooth_lines(right_raw, self.right_history, side='right')
+        left_smooth = self.smooth_lines_with_forecasting(left_raw, self.left_history, side='left')
+        right_smooth = self.smooth_lines_with_forecasting(right_raw, self.right_history, side='right')
+        
+        # 10.5. Validate Lane Width (Spatial Constraint)
+        if not self.validate_lane_width(left_smooth, right_smooth):
+            # Invalid lane width - use previous frame's lanes
+            if len(self.left_history) > 0 and len(self.right_history) > 0:
+                left_smooth = np.mean(self.left_history, axis=0)
+                right_smooth = np.mean(self.right_history, axis=0)
         
         # 11. Coordinates
         left_line = self.make_coordinates(frame, left_smooth)

@@ -28,7 +28,7 @@ def main():
 
     # Video Source
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    video_path = os.path.join(current_dir, "..", "assets", "videos", "test4.mp4")
+    video_path = os.path.join(current_dir, "..", "assets", "videos", "test5.mp4")
     video_path = os.path.abspath(video_path)
 
     if os.path.exists(video_path):

@@ -8,8 +8,16 @@ class VehicleDetector:
         
         # Frame Skipping State
         self.frame_count = 0
-        self.skip_interval = 3  # Run detection every 3rd frame
+        self.skip_interval = 3  # Run detection every 2nd frame (was 3 for better motorcycle tracking)
         self.last_detections = [] # Cache
+        
+        # Class-specific confidence thresholds
+        self.confidence_thresholds = {
+            2: 0.12,  # car
+            3: 0.05,  # motorcycle - much lower (small objects)
+            5: 0.12,  # bus
+            7: 0.12,  # truck
+        }
 
     def detect(self, frame):
         """
@@ -24,8 +32,8 @@ class VehicleDetector:
             return self.last_detections
 
         # 2. Run Heavy Inference (Only if not skipped)
-        # ensure imgsz=640 for speed
-        results = self.model.track(frame, persist=True, verbose=False, conf=0.1, imgsz=640) 
+        # Use lower global confidence to catch motorcycles, then filter per-class
+        results = self.model.track(frame, persist=True, verbose=False, conf=0.05, imgsz=640) 
         
         detections = []
         
@@ -37,11 +45,14 @@ class VehicleDetector:
                 # Get Track ID (if available)
                 track_id = int(box.id.item()) if box.id is not None else -1
                 
-                # Filter for vehicles (car, bus, truck, motorcycle)
+                # Filter for vehicles with class-specific thresholds
                 cls_id = int(box.cls.item())
-                if cls_id in [2, 3, 5, 7]: 
+                if cls_id in self.confidence_thresholds:
                     conf = float(box.conf.item())
-                    detections.append([int(x1), int(y1), int(x2), int(y2), track_id, cls_id, conf])
+                    threshold = self.confidence_thresholds[cls_id]
+                    
+                    if conf >= threshold:
+                        detections.append([int(x1), int(y1), int(x2), int(y2), track_id, cls_id, conf])
         
         # 3. Update Cache
         self.last_detections = detections
