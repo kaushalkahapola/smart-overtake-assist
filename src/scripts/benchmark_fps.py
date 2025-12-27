@@ -104,8 +104,19 @@ def benchmark_system():
     plt.grid(True, linestyle=':', alpha=0.6)
     plt.tight_layout()
     
-    plt.savefig("fps_analysis_graph.png", dpi=300)
-    print("Graph saved to: fps_analysis_graph.png")
+    # Extract model name for filename
+    model_name = os.path.splitext(os.path.basename(config.YOLO_MODEL_PATH))[0]
+    filename = f"{model_name}_fps_analysis_graph.png"
+    
+    # Save to results/ directory
+    base_dir = os.path.abspath(os.path.join(current_dir, "..", ".."))
+    results_dir = os.path.join(base_dir, "results")
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    
+    save_path = os.path.join(results_dir, filename)
+    plt.savefig(save_path, dpi=300)
+    print(f"Graph saved to: {save_path}")
 
 if __name__ == "__main__":
     benchmark_system()

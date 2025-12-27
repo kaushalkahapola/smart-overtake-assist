@@ -3,6 +3,7 @@
 */**/*.md
 */**/*.pdf
 */**/*.mp4
+*/**/*.png
 */**/__pycache__
 */**/references/
 assets/videos/*
