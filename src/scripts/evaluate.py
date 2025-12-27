@@ -206,7 +206,7 @@ def evaluate(video_path, csv_path):
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
     default_video = os.path.join(current_dir, "..", "..", "data", "videos", "test_1.mp4")
-    default_csv = os.path.join(current_dir, "..", "..", "data", "annotations", "ground_truth_dense_2.csv") # Default to standard CSV
+    default_csv = os.path.join(current_dir, "..", "..", "data", "annotations", "ground_truth_dense_1.csv") # Default to standard CSV
 
     video_path = sys.argv[1] if len(sys.argv) > 1 else default_video
     csv_path = sys.argv[2] if len(sys.argv) > 2 else default_csv

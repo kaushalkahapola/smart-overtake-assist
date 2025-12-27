@@ -169,7 +169,7 @@ if __name__ == "__main__":
     default_video = os.path.join(current_dir, "..", "..", "data", "videos", "test_1.mp4")
     default_video = os.path.abspath(default_video)
     
-    default_csv = os.path.join(current_dir, "..", "..", "data", "annotations", "ground_truth_1.csv")
+    default_csv = os.path.join(current_dir, "..", "..", "data", "annotations", "ground_truth_dense_1.csv")
     default_csv = os.path.abspath(default_csv)
 
     video_path = sys.argv[1] if len(sys.argv) > 1 else default_video
