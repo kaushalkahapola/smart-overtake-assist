@@ -4,6 +4,9 @@
 */**/*.pdf
 */**/*.mp4
 */**/*.png
+**/**/*.txt
+*/**/rapid_labeler.py
+*/**/vis_cv_pipeline.py
 */**/__pycache__
 */**/references/
 assets/videos/*
