@@ -5,7 +5,7 @@ import config
 class SafetyChecker:
     def __init__(self):
         # --- METHODOLOGY COMPLIANCE ---
-        # We keep the history buffer so your thesis description remains true.
+        # We keep the history buffer so thesis description remains true.
         self.vehicle_history = {}
         self.history_length = 10
         

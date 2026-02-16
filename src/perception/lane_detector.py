@@ -63,7 +63,13 @@ class LaneDetector:
     def init_ui(self):
         def nothing(x): pass
         cv2.namedWindow('Lane Tuning', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Lane Tuning', 400, 600)
+        cv2.resizeWindow('Lane Tuning', 400, 900)
+        
+        # macOS Fix: Show a placeholder to initialize the window and wait for the event loop
+        # Increased height from 600 to 900 to prevent trackbar overlap on macOS
+        placeholder = np.zeros((900, 400, 3), dtype=np.uint8)
+        cv2.imshow('Lane Tuning', placeholder)
+        cv2.waitKey(100) 
         
         # --- Hough Controls ---
         cv2.createTrackbar('Canny Low', 'Lane Tuning', self.hough_canny_low, 255, nothing)
