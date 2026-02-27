@@ -52,6 +52,22 @@ class LaneDetector:
         self.lane_width_history = []
         self.expected_lane_width = None
 
+        # --- Lane Locking State Machine ---
+        # Once a lane is confirmed for N frames, "lock" onto it.
+        # In locked state, noise far from the lock position is discarded
+        # BEFORE it enters averaging — making it structurally impossible
+        # for noise to affect the output.
+        self.left_lock = None       # Locked (slope, bottom_x) or None
+        self.right_lock = None
+        self.left_lock_confidence = 0
+        self.right_lock_confidence = 0
+        self.lock_threshold = 5     # Frames needed to lock
+        self.lock_radius = 80       # px — only lines within this radius of lock survive
+        self.lock_drift_rate = 0.1  # How fast lock adapts to gradual lane changes
+        self.unlock_threshold = 8   # Consecutive misses before unlocking
+        self.left_lock_misses = 0
+        self.right_lock_misses = 0
+
         # --- Color Params ---
         self.white_l_min = defaults["white_l_min"]
         self.yellow_h_min = defaults["yellow_h_min"]
@@ -61,15 +77,29 @@ class LaneDetector:
         self.init_ui()
 
     def init_ui(self):
+        import platform
+        system = platform.system()
+        
         def nothing(x): pass
         cv2.namedWindow('Lane Tuning', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Lane Tuning', 400, 900)
         
-        # macOS Fix: Show a placeholder to initialize the window and wait for the event loop
-        # Increased height from 600 to 900 to prevent trackbar overlap on macOS
-        placeholder = np.zeros((900, 400, 3), dtype=np.uint8)
-        cv2.imshow('Lane Tuning', placeholder)
-        cv2.waitKey(100) 
+        if system == 'Darwin':  # macOS
+            cv2.resizeWindow('Lane Tuning', 400, 900)
+            # macOS Fix: Show a placeholder to initialize the window and wait for the event loop
+            # Increased height from 600 to 900 to prevent trackbar overlap on macOS
+            placeholder = np.zeros((900, 400, 3), dtype=np.uint8)
+            cv2.imshow('Lane Tuning', placeholder)
+            cv2.waitKey(100)
+        else:  # Linux / Windows
+            # Cross-platform Fix: Increase width to 600px to ensure trackbar names fit on Linux.
+            # Use a small visible placeholder image (e.g., 50px tall) so the window height
+            # doesn't exceed Linux 1080p screens, while keeping labels readable.
+            cv2.resizeWindow('Lane Tuning', 600, 600)
+            placeholder = np.zeros((50, 600, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "Tuning Controls", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            cv2.imshow('Lane Tuning', placeholder)
+            cv2.waitKey(10)
+        
         
         # --- Hough Controls ---
         cv2.createTrackbar('Canny Low', 'Lane Tuning', self.hough_canny_low, 255, nothing)
@@ -141,6 +171,198 @@ class LaneDetector:
         masked_image = cv2.bitwise_and(img, mask)
         return masked_image, pts
 
+    def _reject_outlier_lines(self, lines, weights):
+        """
+        Median-based outlier rejection using MAD (Median Absolute Deviation).
+        Prevents a single noisy Hough line from corrupting the weighted average.
+        Returns filtered (lines, weights).
+        """
+        if len(lines) < 3:
+            return lines, weights  # Not enough data for meaningful rejection
+        
+        slopes = np.array([l[0] for l in lines])
+        bottom_xs = np.array([l[1] for l in lines])
+        
+        # MAD-based rejection for slopes
+        median_slope = np.median(slopes)
+        mad_slope = max(np.median(np.abs(slopes - median_slope)), 0.1)
+        
+        # MAD-based rejection for bottom_x
+        median_bx = np.median(bottom_xs)
+        mad_bx = max(np.median(np.abs(bottom_xs - median_bx)), 30.0)
+        
+        filtered_lines = []
+        filtered_weights = []
+        for i, (slope, bottom_x) in enumerate(lines):
+            slope_dev = abs(slope - median_slope) / mad_slope
+            bx_dev = abs(bottom_x - median_bx) / mad_bx
+            # Keep lines within 3× MAD on both metrics
+            if slope_dev < 3.0 and bx_dev < 3.0:
+                filtered_lines.append((slope, bottom_x))
+                filtered_weights.append(weights[i])
+        
+        # Fallback: if everything was rejected, return originals
+        if len(filtered_lines) == 0:
+            return lines, weights
+        
+        return filtered_lines, filtered_weights
+
+    def _cluster_select_lines(self, lines, weights, cluster_gap=40):
+        """
+        Density-based clustering of Hough lines by bottom_x position.
+        Groups lines within cluster_gap pixels, then selects the cluster
+        with the highest total line length (weight).
+        
+        A thick solid line produces many overlapping Hough segments in a
+        tight band → highest total weight. Scattered noise dots produce
+        isolated short segments → low total weight.
+        """
+        if len(lines) < 2:
+            return lines, weights
+        
+        # Sort by bottom_x
+        indexed = sorted(range(len(lines)), key=lambda i: lines[i][1])
+        
+        # Greedy clustering by bottom_x proximity
+        clusters = []  # list of (indices_list)
+        current_cluster = [indexed[0]]
+        
+        for k in range(1, len(indexed)):
+            prev_bx = lines[indexed[k-1]][1]
+            curr_bx = lines[indexed[k]][1]
+            if abs(curr_bx - prev_bx) <= cluster_gap:
+                current_cluster.append(indexed[k])
+            else:
+                clusters.append(current_cluster)
+                current_cluster = [indexed[k]]
+        clusters.append(current_cluster)
+        
+        # Pick cluster with highest total weight (line length)
+        best_cluster = max(clusters, key=lambda c: sum(weights[i] for i in c))
+        
+        sel_lines = [lines[i] for i in best_cluster]
+        sel_weights = [weights[i] for i in best_cluster]
+        return sel_lines, sel_weights
+
+    def _ema_smooth(self, history):
+        """
+        Exponentially weighted average of history.
+        More recent entries get higher weight → smoother, more responsive output.
+        """
+        n = len(history)
+        if n == 0:
+            return None
+        if n == 1:
+            return np.array(history[0])
+        
+        alpha = 0.35
+        wts = np.array([alpha * ((1 - alpha) ** (n - 1 - i)) for i in range(n)])
+        wts /= wts.sum()
+        
+        slopes = np.array([h[0] for h in history])
+        bottom_xs = np.array([h[1] for h in history])
+        
+        return np.array([np.dot(wts, slopes), np.dot(wts, bottom_xs)])
+
+    def _apply_lane_lock(self, lines, weights, side='left'):
+        """
+        Pre-filter Hough lines using lane lock position.
+        When locked: only lines within lock_radius of the locked bottom_x survive.
+        When unlocked: all lines pass through.
+        
+        This is the key noise immunity mechanism — noise outside the lane
+        is discarded BEFORE it can influence any averaging.
+        """
+        lock = self.left_lock if side == 'left' else self.right_lock
+        confidence = self.left_lock_confidence if side == 'left' else self.right_lock_confidence
+        
+        # Not locked yet — let everything through
+        if lock is None or confidence < self.lock_threshold:
+            return lines, weights
+        
+        locked_bottom_x = lock[1]
+        
+        filtered_lines = []
+        filtered_weights = []
+        for i, (slope, bottom_x) in enumerate(lines):
+            if abs(bottom_x - locked_bottom_x) <= self.lock_radius:
+                filtered_lines.append((slope, bottom_x))
+                filtered_weights.append(weights[i])
+        
+        # If lock filtered out EVERYTHING, return originals
+        # (avoids total loss of detection — lock will degrade via misses)
+        if len(filtered_lines) == 0:
+            return lines, weights
+        
+        return filtered_lines, filtered_weights
+
+    def _update_lane_lock(self, smoothed_line, side='left'):
+        """
+        Update the lane lock state machine after smoothing.
+        
+        States:
+          UNLOCKED (confidence < lock_threshold): Building confidence
+          LOCKED   (confidence >= lock_threshold): Noise filtered, lock drifts
+        
+        Transitions:
+          Detection consistent with lock → confidence++, drift lock position
+          Detection missing/inconsistent → misses++
+          Too many misses → unlock (confidence = 0)
+        """
+        if side == 'left':
+            lock = self.left_lock
+            confidence = self.left_lock_confidence
+            misses = self.left_lock_misses
+        else:
+            lock = self.right_lock
+            confidence = self.right_lock_confidence
+            misses = self.right_lock_misses
+        
+        if smoothed_line is None:
+            # No detection — increment misses
+            misses += 1
+            if misses > self.unlock_threshold:
+                lock = None
+                confidence = 0
+                misses = 0
+        elif lock is None:
+            # First ever lock — initialize
+            lock = tuple(smoothed_line)
+            confidence = 1
+            misses = 0
+        else:
+            # Check if detection is consistent with current lock
+            deviation = abs(smoothed_line[1] - lock[1])
+            
+            if deviation <= self.lock_radius:
+                # Consistent — increase confidence and drift lock
+                confidence = min(confidence + 1, self.lock_threshold + 10)
+                misses = 0
+                
+                # Drift lock position (EMA) to follow curves
+                new_slope = lock[0] * (1 - self.lock_drift_rate) + smoothed_line[0] * self.lock_drift_rate
+                new_bx = lock[1] * (1 - self.lock_drift_rate) + smoothed_line[1] * self.lock_drift_rate
+                lock = (new_slope, new_bx)
+            else:
+                # Inconsistent — this could be noise or a real lane change
+                misses += 1
+                if misses > self.unlock_threshold:
+                    # Real lane change — unlock and re-initialize
+                    lock = tuple(smoothed_line)
+                    confidence = 1
+                    misses = 0
+                # Otherwise keep current lock (noise rejection)
+        
+        # Write back state
+        if side == 'left':
+            self.left_lock = lock
+            self.left_lock_confidence = confidence
+            self.left_lock_misses = misses
+        else:
+            self.right_lock = lock
+            self.right_lock_confidence = confidence
+            self.right_lock_misses = misses
+
     def average_slope_bottom_x(self, lines, img_shape):
         left_lines = []
         left_weights = []
@@ -169,17 +391,38 @@ class LaneDetector:
                 
                 length = np.sqrt((y1 - y2)**2 + (x1 - x2)**2)
                 
+                # Use length² as weight — makes long solid lines dominate
+                # A 100px solid line gets 25× the weight of a 20px noise segment
+                weight = length * length
+                
                 # Filter based on slope AND spatial location
-                if -0.9 < slope < -0.3: 
-                    # Left line: Should be on left side (symmetric with right line)
-                    if x1 < center_x and x2 < center_x:
+                # Widened range for two-lane roads with tighter curves (Sri Lankan roads)
+                mid_x = (x1 + x2) / 2  # Midpoint for curve-tolerant spatial check
+                if -1.2 < slope < -0.25: 
+                    # Left line: midpoint should be on left side
+                    # (relaxed from both endpoints — allows curved lines crossing center)
+                    if mid_x < center_x:
                         left_lines.append((slope, bottom_x))
-                        left_weights.append(length)
-                elif 0.3 < slope < 0.9:
-                    # Right line: Should be on right side
-                    if x1 > center_x and x2 > center_x:
+                        left_weights.append(weight)
+                elif 0.25 < slope < 1.2:
+                    # Right line: midpoint should be on right side
+                    if mid_x > center_x:
                         right_lines.append((slope, bottom_x))
-                        right_weights.append(length)
+                        right_weights.append(weight)
+        
+        # --- Lane Lock Pre-filter: discard noise far from locked position ---
+        left_lines, left_weights = self._apply_lane_lock(
+            left_lines, left_weights, side='left')
+        right_lines, right_weights = self._apply_lane_lock(
+            right_lines, right_weights, side='right')
+        
+        # --- Density-based clustering: prefer thick solid lines over noise ---
+        left_lines, left_weights = self._cluster_select_lines(left_lines, left_weights)
+        right_lines, right_weights = self._cluster_select_lines(right_lines, right_weights)
+        
+        # --- Median-based outlier rejection within selected cluster ---
+        left_lines, left_weights = self._reject_outlier_lines(left_lines, left_weights)
+        right_lines, right_weights = self._reject_outlier_lines(right_lines, right_weights)
         
         left_lane = None
         right_lane = None
@@ -254,23 +497,44 @@ class LaneDetector:
 
     def forecast_lane_position(self, history):
         """
-        Predicts next lane position based on historical trend.
+        Predicts next lane position using EMA-damped forecasting.
+        Uses exponentially weighted recent history instead of raw velocity
+        to prevent noise amplification.
         Returns predicted (slope, bottom_x) or None if insufficient data.
         """
         if len(history) < 3:
             return None
         
-        # Extract recent bottom_x positions
-        recent_bottom_x = [h[1] for h in history[-3:]]
-        recent_slopes = [h[0] for h in history[-3:]]
+        # Use up to last 5 frames, weighted by recency (EMA)
+        n = min(len(history), 5)
+        recent = history[-n:]
         
-        # Calculate velocity (average change per frame)
-        bottom_x_velocity = (recent_bottom_x[-1] - recent_bottom_x[0]) / 2.0
-        slope_velocity = (recent_slopes[-1] - recent_slopes[0]) / 2.0
+        # EMA weights: most recent frame gets highest weight
+        # weights = [alpha * (1-alpha)^(n-1-i)] for i in range(n)
+        alpha = 0.4
+        weights = np.array([alpha * ((1 - alpha) ** (n - 1 - i)) for i in range(n)])
+        weights /= weights.sum()  # Normalize
         
-        # Predict next position
-        predicted_bottom_x = recent_bottom_x[-1] + bottom_x_velocity
-        predicted_slope = recent_slopes[-1] + slope_velocity
+        recent_slopes = np.array([h[0] for h in recent])
+        recent_bottom_x = np.array([h[1] for h in recent])
+        
+        # EMA-weighted position (this IS the prediction — the weighted
+        # average naturally trends toward the latest position)
+        ema_slope = np.dot(weights, recent_slopes)
+        ema_bottom_x = np.dot(weights, recent_bottom_x)
+        
+        # Add damped velocity for slight look-ahead
+        # Damping factor prevents runaway predictions from noisy velocity
+        damping = 0.3
+        if n >= 2:
+            velocity_bx = (recent_bottom_x[-1] - recent_bottom_x[-2]) * damping
+            velocity_slope = (recent_slopes[-1] - recent_slopes[-2]) * damping
+        else:
+            velocity_bx = 0.0
+            velocity_slope = 0.0
+        
+        predicted_bottom_x = ema_bottom_x + velocity_bx
+        predicted_slope = ema_slope + velocity_slope
         
         return (predicted_slope, predicted_bottom_x)
     
@@ -315,8 +579,8 @@ class LaneDetector:
         # No current detection
         if current_line is None:
             if len(history) > 0:
-                # Use last known good position
-                return np.mean(history, axis=0)
+                # Use last known good position (EMA-weighted)
+                return self._ema_smooth(history)
             return None
         
         # First detection - accept it
@@ -361,9 +625,22 @@ class LaneDetector:
                         blended_slope = self.forecast_weight * pred_slope + (1 - self.forecast_weight) * curr_slope
                         blended_bottom_x = self.forecast_weight * pred_bottom_x + (1 - self.forecast_weight) * curr_bottom_x
                         return np.array([blended_slope, blended_bottom_x])
+                else:
+                    # Detection is consistent with prediction — accept it into history
+                    history.append(current_line)
+                    if len(history) > self.smooth_factor:
+                        history.pop(0)
+                    if side == 'left': 
+                        self.left_rejections = 0
+                    else: 
+                        self.right_rejections = 0
         
         # --- Legacy Smoothing (Fallback) ---
-        avg = np.mean(history, axis=0)
+        avg = self._ema_smooth(history)
+        if avg is None:
+            history.append(current_line)
+            return current_line
+        
         slope_diff = abs(current_line[0] - avg[0])
         bottom_x_diff = abs(current_line[1] - avg[1])
         
@@ -393,9 +670,9 @@ class LaneDetector:
                 else: 
                     self.right_rejections = 0
         
-        # Return smoothed average
+        # Return EMA-weighted smooth average
         if len(history) > 0:
-            return np.mean(history, axis=0)
+            return self._ema_smooth(history)
         return None
 
     def make_coordinates(self, image, line_params):
@@ -489,8 +766,13 @@ class LaneDetector:
         # 3. Grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # 4. Blur
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        # 4. Blur (larger kernel for noisy dashcam footage)
+        blur = cv2.GaussianBlur(gray, (7, 7), 0)
+        
+        # 4.5 Adaptive Contrast Enhancement (CLAHE)
+        # Handles uneven lighting (shade + sun patches on Sri Lankan roads)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        blur = clahe.apply(blur)
         
         # 5. Canny
         edges = cv2.Canny(blur, self.hough_canny_low, self.hough_canny_high)
@@ -498,8 +780,20 @@ class LaneDetector:
         # 6. Color Thresholding
         color_edges = self.isolate_color_edges(frame)
         
+        # 6.5 Dilate color mask — connects thick solid lines, making them
+        # produce strong continuous edges vs scattered noise dots
+        dilate_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        color_edges = cv2.dilate(color_edges, dilate_kernel, iterations=1)
+        
         # 7. Combined Edges
         combined_edges = cv2.bitwise_or(edges, color_edges)
+        
+        # 7.5 Morphological cleanup — removes noise dots, bridges small gaps
+        # Close first (bridge gaps in lines), then Open (remove noise blobs)
+        close_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        open_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))  # Larger for stronger noise removal
+        combined_edges = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, close_kernel)
+        combined_edges = cv2.morphologyEx(combined_edges, cv2.MORPH_OPEN, open_kernel)
         
         # 8. ROI
         masked_edges, roi_pts = self.region_of_interest(combined_edges)
@@ -518,12 +812,16 @@ class LaneDetector:
         left_smooth = self.smooth_lines_with_forecasting(left_raw, self.left_history, side='left')
         right_smooth = self.smooth_lines_with_forecasting(right_raw, self.right_history, side='right')
         
+        # 10.25. Update Lane Locks (state machine)
+        self._update_lane_lock(left_smooth, side='left')
+        self._update_lane_lock(right_smooth, side='right')
+        
         # 10.5. Validate Lane Width (Spatial Constraint)
         if not self.validate_lane_width(left_smooth, right_smooth):
             # Invalid lane width - use previous frame's lanes
             if len(self.left_history) > 0 and len(self.right_history) > 0:
-                left_smooth = np.mean(self.left_history, axis=0)
-                right_smooth = np.mean(self.right_history, axis=0)
+                left_smooth = self._ema_smooth(self.left_history)
+                right_smooth = self._ema_smooth(self.right_history)
         
         # 11. Coordinates
         left_line = self.make_coordinates(frame, left_smooth)

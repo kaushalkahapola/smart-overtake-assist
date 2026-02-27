@@ -43,6 +43,38 @@ def main():
         print("Error: Could not open video source.")
         return
 
+    # --- Tuning Loop ---
+    print("\n" + "="*40)
+    print("ENTERING TUNING MODE")
+    print("Adjust parameters in 'Lane Tuning' window.")
+    print("Press 's' to START system, or 'q' to abort.")
+    print("="*40 + "\n")
+
+    ret, tuning_frame = cap.read()
+    
+    if ret:
+        tuning_frame = cv2.resize(tuning_frame, (1280, 720))
+        while True:
+            detections = vehicle_detector.detect(tuning_frame)
+            left_line, right_line, debug_view = lane_detector.detect(tuning_frame)
+            
+            cv2.imshow("Tuning Preview", debug_view)
+            
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('s'):
+                print("Tuning complete. Starting system...")
+                cv2.destroyWindow("Tuning Preview")
+                # Attempt to reset video to start (ignored for webcams)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0) 
+                break
+            elif key == ord('q'):
+                cap.release()
+                cv2.destroyAllWindows()
+                return
+    else:
+        print("Error: Could not read first frame for tuning.")
+        return
+
     print("System running... Press 'q' to stop and calculate Average FPS.")
 
     # --- FPS Variables ---

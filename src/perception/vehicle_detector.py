@@ -11,12 +11,12 @@ class VehicleDetector:
         self.skip_interval = 3  
         self.last_detections = [] # Cache
         
-        # Class-specific confidence thresholds
+        # Class-specific confidence thresholds (lowered for distant detection)
         self.confidence_thresholds = {
-            2: 0.12,  # car
-            3: 0.05,  # motorcycle - much lower (small objects)
-            5: 0.12,  # bus
-            7: 0.12,  # truck
+            2: 0.08,  # car
+            3: 0.03,  # motorcycle - very low (small objects, hard to detect)
+            5: 0.08,  # bus
+            7: 0.08,  # truck
         }
 
     def detect(self, frame):

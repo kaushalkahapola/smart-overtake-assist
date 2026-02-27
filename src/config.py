@@ -9,7 +9,7 @@ import os
 # Resolve path relative to this source file (src/config.py)
 # assets is in application/data, src is in application/src
 _current_dir = os.path.dirname(os.path.abspath(__file__))
-YOLO_MODEL_PATH = os.path.join(_current_dir, "..", "data", "models", "yolov8n.pt")
+YOLO_MODEL_PATH = os.path.join(_current_dir, "..", "data", "models", "yolov8s.pt")
 TEST_VIDEO_PATH = os.path.join(_current_dir, "..", "data", "videos", "test_1.mp4")
 
 # Lane Detection Defaults
@@ -19,13 +19,13 @@ LANE_DETECTION_DEFAULTS = {
     "hough_rho": 2,
     "hough_theta": 1,
     "hough_threshold": 15,
-    "hough_min_line_len": 40,
+    "hough_min_line_len": 60,
     "hough_max_line_gap": 20,
     "roi_top_width": 100,
     "roi_bottom_width": 600,
     "roi_height_pct": 0.6,
     "roi_bottom_offset": 50,
-    "smooth_factor": 5,
+    "smooth_factor": 8,
     "white_l_min": 200,
     "yellow_h_min": 15,
     "yellow_h_max": 35,
@@ -33,11 +33,11 @@ LANE_DETECTION_DEFAULTS = {
     
     # Forecasting and Stability Parameters
     "forecast_enabled": True,
-    "bottom_anchor_threshold": 50,  # max px deviation for bottom point
+    "bottom_anchor_threshold": 70,  # max px deviation for bottom point (wider for two-lane roads)
     "min_lane_separation": 200,     # min px between left and right lanes at bottom
     "max_lane_width": 450,          # max px lane width at bottom (rejects far-right line)
     "lane_width_tolerance": 0.3,    # 30% width change tolerance
-    "forecast_weight": 0.7,         # weight for predicted position vs new detection
+    "forecast_weight": 0.5,         # weight for predicted position vs new detection (balanced)
     "left_lane_max_x_ratio": 0.45   # left lane bottom_x should be < 45% of frame width
 }
 
@@ -46,7 +46,7 @@ LANE_DETECTION_DEFAULTS = {
 # Assume: Focal Length (pixels) approx 1000 for 720p (Needs calibration)
 # Car Width approx 1.8 meters
 DISTANCE_ESTIMATION_PARAMS = {
-    "FOCAL_LENGTH": 1000.0, 
+    "FOCAL_LENGTH": 500.0, 
     "KNOWN_WIDTH": 1.8  # meters
 }
 
