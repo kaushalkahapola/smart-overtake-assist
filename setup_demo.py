@@ -114,6 +114,8 @@ def main():
 
         tuning_frame = cv2.resize(tuning_frame, (1280, 720))
         tuned_params = None
+        current_frame_id = 0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
         while True:
             # Full perception pipeline for the single tuning frame
@@ -125,10 +127,25 @@ def main():
             status, divider = safety_checker.assess(detections, lane_info)
             output_frame = cv2.resize(tuning_frame.copy(), (1280, 720)) # fallback
             
+            # Add text so they know they can skip frames
+            cv2.putText(debug_view, f"Frame {current_frame_id}/{total_frames} (Press 'A'/'D' to skip frames)", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
             cv2.imshow("Tuning Preview", debug_view)
             
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('u'):
+            if key in [ord('d'), ord('D')]:
+                current_frame_id = min(total_frames - 1, current_frame_id + 30)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_id)
+                ret, tuning_frame = cap.read()
+                if ret:
+                    tuning_frame = cv2.resize(tuning_frame, (1280, 720))
+            elif key in [ord('a'), ord('A')]:
+                current_frame_id = max(0, current_frame_id - 30)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame_id)
+                ret, tuning_frame = cap.read()
+                if ret:
+                    tuning_frame = cv2.resize(tuning_frame, (1280, 720))
+            elif key == ord('u'):
                 tuned_params = get_current_tuning(lane_detector)
                 video_config.update(tuned_params)
                 all_configs[video_id] = video_config
