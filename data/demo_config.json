@@ -1,0 +1,42 @@
+{
+    "1": {
+        "video_file": "test_1.mp4",
+        "hough": {
+            "canny_low": 255,
+            "canny_high": 255,
+            "threshold": 57,
+            "min_len": 82,
+            "max_gap": 103
+        },
+        "color": {
+            "white_l_min": 135,
+            "yellow_h_min": 50,
+            "yellow_h_max": 35,
+            "yellow_s_min": 100
+        },
+        "roi": {
+            "top_w": 109,
+            "bot_w": 316,
+            "h_pct": 23,
+            "bot_off": 50
+        },
+        "segments": [
+            [
+                123,
+                537
+            ],
+            [
+                2116,
+                2402
+            ],
+            [
+                2713,
+                2874
+            ],
+            [
+                5003,
+                5399
+            ]
+        ]
+    }
+}

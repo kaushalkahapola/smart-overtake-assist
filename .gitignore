@@ -12,3 +12,4 @@ assets/videos/*
 assets/models/*
 results/
 venv
+__pycache__
