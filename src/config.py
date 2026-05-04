@@ -46,7 +46,7 @@ LANE_DETECTION_DEFAULTS = {
 # Assume: Focal Length (pixels) approx 1000 for 720p (Needs calibration)
 # Car Width approx 1.8 meters
 DISTANCE_ESTIMATION_PARAMS = {
-    "FOCAL_LENGTH": 416.67, 
+    "FOCAL_LENGTH": 500.0, 
     "KNOWN_WIDTH": 1.8  # meters
 }
 
