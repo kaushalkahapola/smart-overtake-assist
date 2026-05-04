@@ -3,6 +3,7 @@ import os
 import cv2
 import numpy as np
 import sys
+import json
 
 # Adjust path to import modules if running from src/scripts directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -12,6 +13,46 @@ from perception.lane_detector import LaneDetector
 from logic.safety_checker import SafetyChecker
 from utils.visualization import draw_results
 import config
+
+def apply_tuning_defaults(params):
+    # Apply JSON parameters directly to the Lane Tuning trackbars
+    if not params:
+        return
+        
+    hough_params = params.get("hough", {})
+    color_params = params.get("color", {})
+    roi_params = params.get("roi", {})
+    
+    # Ensure window exists before setting trackbars
+    cv2.namedWindow('Lane Tuning', cv2.WINDOW_NORMAL)
+    
+    cv2.setTrackbarPos('Canny Low', 'Lane Tuning', hough_params.get('canny_low', 50))
+    cv2.setTrackbarPos('Canny High', 'Lane Tuning', hough_params.get('canny_high', 150))
+    cv2.setTrackbarPos('Threshold', 'Lane Tuning', hough_params.get('threshold', 50))
+    cv2.setTrackbarPos('Min Len', 'Lane Tuning', hough_params.get('min_len', 100))
+    cv2.setTrackbarPos('Max Gap', 'Lane Tuning', hough_params.get('max_gap', 50))
+    
+    cv2.setTrackbarPos('White L', 'Lane Tuning', color_params.get('white_l_min', 200))
+    cv2.setTrackbarPos('Yel H Min', 'Lane Tuning', color_params.get('yellow_h_min', 15))
+    cv2.setTrackbarPos('Yel H Max', 'Lane Tuning', color_params.get('yellow_h_max', 35))
+    cv2.setTrackbarPos('Yel S Min', 'Lane Tuning', color_params.get('yellow_s_min', 100))
+    
+    cv2.setTrackbarPos('ROI Top W', 'Lane Tuning', roi_params.get('top_w', 200))
+    cv2.setTrackbarPos('ROI Bot W', 'Lane Tuning', roi_params.get('bot_w', 600))
+    cv2.setTrackbarPos('ROI H %', 'Lane Tuning', roi_params.get('h_pct', 40))
+    cv2.setTrackbarPos('ROI Bot Off', 'Lane Tuning', roi_params.get('bot_off', 50))
+
+def get_demo_config(video_id):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(current_dir, "..", "..", "data", "demo_config.json")
+    
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            all_configs = json.load(f)
+            if video_id in all_configs:
+                return all_configs[video_id]
+                
+    return None
 
 def calculate_metrics(y_true, y_pred, labels=["SAFE", "RISKY"]):
     # Simple manual confusion matrix
@@ -35,7 +76,7 @@ def calculate_metrics(y_true, y_pred, labels=["SAFE", "RISKY"]):
     
     return cm
 
-def evaluate(video_path, csv_path):
+def evaluate(video_path, csv_path, demo_config=None):
     print(f"Loading Ground Truth from: {csv_path}")
     
     ground_truth = {}
@@ -110,6 +151,10 @@ def evaluate(video_path, csv_path):
         return
     
     print(f"Evaluating on {len(target_frames)} labeled frames...")
+    
+    if demo_config:
+        print("Applying predefined configuration from demo_config.json...")
+        apply_tuning_defaults(demo_config)
     
     # --- Tuning Loop ---
     print("\n" + "="*40)
@@ -192,7 +237,17 @@ def evaluate(video_path, csv_path):
         
         # Optional: Show progress window to ensure OS knows app is alive
         cv2.imshow("Evaluation Progress", cv2.resize(output_frame, (640, 360)))
-        cv2.waitKey(1) 
+        key = cv2.waitKey(1) & 0xFF
+        
+        if key == ord('q'):
+            print("\nEvaluation interrupted.")
+            break
+        elif key == ord('p'):
+            print("\nPaused. Press 'p' again to resume.")
+            while True:
+                if cv2.waitKey(1) & 0xFF == ord('p'):
+                    print("Resumed.")
+                    break
 
         filename = f"frame_{target}_truth_{final_truth}_pred_{final_pred}.jpg".lower()
         save_path = os.path.join(success_dir if final_truth == final_pred else fail_dir, filename)
@@ -205,14 +260,28 @@ def evaluate(video_path, csv_path):
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    default_video = os.path.join(current_dir, "..", "..", "data", "videos", "test_1.mp4")
-    default_csv = os.path.join(current_dir, "..", "..", "data", "annotations", "ground_truth_dense_1.csv") # Default to standard CSV
+    
+    video_path = None
+    csv_path = None
+    demo_config = None
 
-    video_path = sys.argv[1] if len(sys.argv) > 1 else default_video
-    csv_path = sys.argv[2] if len(sys.argv) > 2 else default_csv
+    if len(sys.argv) == 2 and sys.argv[1] in ["1", "2"]:
+        # Simplified style: python evaluate.py 1
+        video_id = sys.argv[1]
+        video_path = os.path.join(current_dir, "..", "..", "data", "videos", f"test_{video_id}.mp4")
+        csv_path = os.path.join(current_dir, "..", "..", "data", "annotations", f"ground_truth_dense_{video_id}.csv")
+        demo_config = get_demo_config(video_id)
+        print(f"Using simplified argument mode for video ID: {video_id}")
+    else:
+        # Standard style
+        default_video = os.path.join(current_dir, "..", "..", "data", "videos", "test_1.mp4")
+        default_csv = os.path.join(current_dir, "..", "..", "data", "annotations", "ground_truth_dense_1.csv") # Default to standard CSV
+
+        video_path = sys.argv[1] if len(sys.argv) > 1 else default_video
+        csv_path = sys.argv[2] if len(sys.argv) > 2 else default_csv
 
     if not os.path.exists(os.path.abspath(video_path)):
         print(f"Error: Video not found at {video_path}")
         sys.exit(1)
 
-    evaluate(os.path.abspath(video_path), os.path.abspath(csv_path))
+    evaluate(os.path.abspath(video_path), os.path.abspath(csv_path), demo_config)

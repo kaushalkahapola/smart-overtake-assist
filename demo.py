@@ -149,11 +149,18 @@ def main():
             if frames_played % 100 == 0:
                 print(f"Overall Progress: {frames_played}/{total_frames_to_play} frames", end='\r')
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
                 print("\nDemo interrupted.")
                 cap.release()
                 cv2.destroyAllWindows()
                 return
+            elif key == ord('p'):
+                print("\nPaused. Press 'p' again to resume.")
+                while True:
+                    if cv2.waitKey(1) & 0xFF == ord('p'):
+                        print("Resumed.")
+                        break
 
     print(f"\nDemo completed ({frames_played} frames played across {len(segments)} segments).")
     cv2.waitKey(2000)

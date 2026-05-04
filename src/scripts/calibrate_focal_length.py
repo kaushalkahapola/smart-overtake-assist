@@ -1,20 +1,32 @@
 import cv2
 import os
 import sys
+import json
 
 # Adjust path to import modules if running from src/scripts directory
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import config
 
-def calibrate(video_path):
+def get_demo_config(video_id):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(current_dir, "..", "..", "data", "demo_config.json")
+    
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            all_configs = json.load(f)
+            if video_id in all_configs:
+                return all_configs[video_id]
+    return None
+
+def calibrate(video_path, demo_config=None):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error reading video: {video_path}")
         return
 
     print("Controls:")
-    print("  SPACE: Pause/Resume")
+    print("  SPACE or 'p': Pause/Resume")
     print("  Mouse: Click Left Edge then Right Edge of a known object (e.g. car)")
     print("  'c': Calculate Focal Length (after clicking)")
     print("  'q': Quit")
@@ -59,7 +71,7 @@ def calibrate(video_path):
         
         key = cv2.waitKey(30) & 0xFF
         
-        if key == ord(' '):
+        if key == ord(' ') or key == ord('p'):
             paused = not paused
         elif key == ord('q'):
             break
@@ -83,14 +95,25 @@ def calibrate(video_path):
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    # Default to test video if not provided
-    video_path = "../../data/videos/test_1.mp4"
-    if len(sys.argv) > 1:
-        video_path = sys.argv[1]
     
-    # Resolve path
+    video_path = None
+    demo_config = None
+
+    if len(sys.argv) == 2 and sys.argv[1] in ["1", "2"]:
+        # Simplified style: python calibrate_focal_length.py 1
+        video_id = sys.argv[1]
+        video_path = os.path.join(current_dir, "..", "..", "data", "videos", f"test_{video_id}.mp4")
+        demo_config = get_demo_config(video_id)
+        if demo_config:
+            print(f"Using simplified argument mode for video ID: {video_id}")
+    else:
+        # Standard fallback style
+        video_path = os.path.join(current_dir, "..", "..", "data", "videos", "test_1.mp4")
+        if len(sys.argv) > 1:
+            video_path = sys.argv[1]
+            
     if not os.path.exists(video_path):
-         # src/../../data/...
-         video_path = os.path.join(current_dir, "..", "..", "data", "videos", "test_1.mp4")
+        print(f"Error: Video not found at {video_path}")
+        sys.exit(1)
          
-    calibrate(video_path)
+    calibrate(os.path.abspath(video_path), demo_config)
