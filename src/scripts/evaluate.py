@@ -63,7 +63,7 @@ def calculate_metrics(y_true, y_pred, labels=["SAFE", "RISKY"]):
             cm[t][p] += 1
             
     # Print Matrix
-    print("\nConfusion Matrix (Rows=True, Cols=Pred):")
+    print("\nConfusion Matrix:")
     print(f"{'':10} {'SAFE':10} {'RISKY':10}")
     for l in labels:
         print(f"{l:10} {cm[l]['SAFE']:<10} {cm[l]['RISKY']:<10}")
