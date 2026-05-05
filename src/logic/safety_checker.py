@@ -27,7 +27,21 @@ class SafetyChecker:
         self.ttc_critical = 2.5   # seconds — immediate danger
         self.ttc_warning = 5.0    # seconds — approaching risk
         self.min_approach_speed = 0.3  # m/s — minimum closing speed to consider approaching
-        
+
+        # --- Clearance Distance Thresholds ---
+        # A non-receding vehicle in the opposing lane within these distances is a hazard
+        # even when TTC is infinite (parked, slow-moving, parallel traffic).
+        # Overtaking requires clear road ahead — distance alone is sufficient signal.
+        self.risky_clear_distance = 40    # metres — too close to start overtaking
+        self.warning_clear_distance = 100  # metres — caution zone
+
+        # --- Receding Close-Range Thresholds ---
+        # A RECEDING vehicle in the opposing lane is moving away, but at close range
+        # that means we are mid-overtake or have just barely cleared it — still dangerous.
+        # Beyond these distances a receding vehicle is genuinely clearing the path.
+        self.receding_risky_distance = 25   # metres — mid-pass, still RISKY
+        self.receding_warning_distance = 50  # metres — just cleared, still WARNING
+
         # Minimum overlap to even consider a vehicle as being in opposing lane
         self.min_overlap_ratio = 0.03
 
@@ -166,27 +180,46 @@ class SafetyChecker:
     def _assess_ttc_risk(self, distance, ttc, trend, bbox_width):
         """
         Determine risk level from TTC and distance.
-        
-        Logic:
-          - Very close (< 15m): RISKY regardless of TTC (no time to react)
-          - TTC < critical: RISKY (collision imminent)
-          - TTC < warning AND approaching: WARNING
-          - Receding / far away: SAFE (even if in opposing lane)
+
+        Two independent axes — both can trigger:
+
+        TTC axis (approaching vehicles):
+          - TTC < ttc_critical: RISKY
+          - TTC < ttc_warning AND closing: WARNING
+
+        Distance axis (any non-receding vehicle in opposing lane):
+          - Covers parked vehicles, slow movers, parallel traffic —
+            anything that occupies the opposing lane within overtake clearance.
+          - Receding vehicles are excluded: they're moving out of the way.
         """
-        # Very close vehicles are always dangerous
+        # Immediately dangerous regardless of anything else
         if distance < 15:
             return "RISKY"
-        
-        # TTC-based assessment
+
+        # TTC-based (fast approaching vehicles)
         if ttc < self.ttc_critical:
             return "RISKY"
         elif ttc < self.ttc_warning and trend in ["APPROACHING", "STABLE", "UNKNOWN"]:
             return "WARNING"
         elif trend == "APPROACHING":
-            # Approaching but TTC is still high — warning
             return "WARNING"
-        
-        # Receding or very far
+
+        # Receding vehicles: moving away, but at close range we are mid-overtake.
+        # Beyond the receding thresholds the vehicle is genuinely clearing the path.
+        if trend == "RECEDING":
+            if distance < self.receding_risky_distance:
+                return "RISKY"
+            if distance < self.receding_warning_distance:
+                return "WARNING"
+            return "SAFE"
+
+        # Distance-based: any non-receding vehicle in the opposing lane within
+        # overtake clearance is unsafe — TTC is irrelevant if the road is occupied.
+        if distance < self.risky_clear_distance:
+            return "RISKY"
+        if distance < self.warning_clear_distance:
+            return "WARNING"
+
         return "SAFE"
         
     def get_lane_x(self, poly, y):

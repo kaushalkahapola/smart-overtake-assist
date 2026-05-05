@@ -184,38 +184,40 @@ def evaluate(video_path, csv_path, demo_config=None):
                 return
 
     # --- Evaluation Loop ---
-    WARMUP_FRAMES = 10  # Increased from 5 for better history accumulation
+    WARMUP_FRAMES = 10
 
     for i, target in enumerate(target_frames):
         # 1. Start EARLY for Warm-Up
         start_frame = max(0, target - WARMUP_FRAMES)
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        
-        # 2. DON'T reset history - let adaptive algorithm accumulate knowledge
-        # This allows expected_lane_width to be learned and maintained
-        # lane_detector.left_history = []  # REMOVED
-        # lane_detector.right_history = []  # REMOVED
-        
-        # 3. Process Warm-Up Frames
+
+        # Reset vehicle history for each target so frame_counter and distance deltas
+        # are relative to this clip segment, not some earlier unrelated segment.
+        # Lane history is intentionally preserved for width learning continuity.
+        safety_checker.vehicle_history.clear()
+        safety_checker.frame_counter = 0
+
+        # 3. Process Warm-Up Frames (full pipeline — vehicle history MUST accumulate
+        # here or TTC is always undefined at the target frame, causing SAFE false negatives)
         frames_to_read = target - start_frame + 1
         current_frame = None
-        
+        left_line, right_line = None, None
+
         for _ in range(frames_to_read):
             ret, current_frame = cap.read()
             if not ret: break
-            
-            # This calls update_params_from_ui() internally.
-            # We MUST keep the window alive so params don't reset to 0.
+
             left_line, right_line, _ = lane_detector.detect(current_frame)
-            
-            # CRITICAL FIX: Keep UI alive so trackbar values don't die
-            cv2.waitKey(1) 
+            warmup_dets = vehicle_detector.detect(current_frame)
+            safety_checker.assess(warmup_dets, (left_line, right_line))
+
+            cv2.waitKey(1)
 
         if not ret:
             print(f"Could not read frame {target}")
             break
-            
-        # 4. Final Detection (Target Frame)
+
+        # 4. Final Detection (Target Frame) — history is now populated
         detections = vehicle_detector.detect(current_frame)
         lane_info = (left_line, right_line)
         

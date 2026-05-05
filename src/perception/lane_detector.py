@@ -50,7 +50,8 @@ class LaneDetector:
         
         # Lane Width Tracking
         self.lane_width_history = []
-        self.expected_lane_width = None
+        self.expected_lane_width = None    # used by validate_lane_width (spatial constraint)
+        self.candidate_lane_width = None   # used by average_slope_bottom_x (candidate selection)
 
         # --- Lane Locking State Machine ---
         # Once a lane is confirmed for N frames, "lock" onto it.
@@ -454,34 +455,36 @@ class LaneDetector:
                     candidate_widths.append(width)
                 
                 # ADAPTIVE SELECTION based on history
-                if self.expected_lane_width is not None:
+                # Uses candidate_lane_width, separate from expected_lane_width used in validate_lane_width,
+                # so noisy candidate selection cannot corrupt the spatial validation baseline.
+                if self.candidate_lane_width is not None:
                     # We have historical data - pick candidate closest to expected width
                     best_idx = -1
                     min_deviation = float('inf')
-                    
+
                     for i, width in enumerate(candidate_widths):
-                        deviation = abs(width - self.expected_lane_width)
-                        
+                        deviation = abs(width - self.candidate_lane_width)
+
                         # Prefer candidates close to expected width
                         if deviation < min_deviation:
                             min_deviation = deviation
                             best_idx = i
-                    
+
                     # Use the best candidate
                     if best_idx >= 0:
                         right_lane = right_lines[best_idx]
-                        
+
                         # Update expected width (slow adaptation)
-                        self.expected_lane_width = 0.9 * self.expected_lane_width + 0.1 * candidate_widths[best_idx]
+                        self.candidate_lane_width = 0.9 * self.candidate_lane_width + 0.1 * candidate_widths[best_idx]
                 else:
                     # NO HISTORY: Pick the NARROWEST lane (most likely correct)
                     # Assumption: single lane is narrower than combined lanes
                     min_width = min(candidate_widths)
                     best_idx = candidate_widths.index(min_width)
                     right_lane = right_lines[best_idx]
-                    
+
                     # Initialize expected width
-                    self.expected_lane_width = min_width
+                    self.candidate_lane_width = min_width
             else:
                 # No left line - use center proximity
                 boosted_right_weights = []
@@ -624,16 +627,26 @@ class LaneDetector:
                         # Use weighted blend of prediction and current
                         blended_slope = self.forecast_weight * pred_slope + (1 - self.forecast_weight) * curr_slope
                         blended_bottom_x = self.forecast_weight * pred_bottom_x + (1 - self.forecast_weight) * curr_bottom_x
-                        return np.array([blended_slope, blended_bottom_x])
+                        blended = np.array([blended_slope, blended_bottom_x])
+                        # Keep history current so future predictions track what was rendered,
+                        # preventing the stale-anchor → chain-rejection → sudden-reset jump
+                        history.append(blended)
+                        if len(history) > self.smooth_factor:
+                            history.pop(0)
+                        return blended
                 else:
                     # Detection is consistent with prediction — accept it into history
                     history.append(current_line)
                     if len(history) > self.smooth_factor:
                         history.pop(0)
-                    if side == 'left': 
+                    if side == 'left':
                         self.left_rejections = 0
-                    else: 
+                    else:
                         self.right_rejections = 0
+                    # Return here — do not fall through to legacy smoothing.
+                    # Legacy would re-evaluate against a lagging EMA, causing double-appends
+                    # or spurious rejections of detections that forecasting already accepted.
+                    return self._ema_smooth(history)
         
         # --- Legacy Smoothing (Fallback) ---
         avg = self._ema_smooth(history)
@@ -765,15 +778,15 @@ class LaneDetector:
         
         # 3. Grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # 4. Blur (larger kernel for noisy dashcam footage)
-        blur = cv2.GaussianBlur(gray, (7, 7), 0)
-        
-        # 4.5 Adaptive Contrast Enhancement (CLAHE)
-        # Handles uneven lighting (shade + sun patches on Sri Lankan roads)
+
+        # 4. CLAHE on raw grayscale — must run before blur, not after.
+        # Applying it to a blurred image re-amplifies noise that blur just suppressed.
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        blur = clahe.apply(blur)
-        
+        enhanced = clahe.apply(gray)
+
+        # 4.5. Blur (larger kernel for noisy dashcam footage)
+        blur = cv2.GaussianBlur(enhanced, (7, 7), 0)
+
         # 5. Canny
         edges = cv2.Canny(blur, self.hough_canny_low, self.hough_canny_high)
         
